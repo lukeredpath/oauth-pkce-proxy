@@ -52,10 +52,14 @@ module OauthPkceProxy
         halt 400, 'code_verifier param was missing'
       end
 
+      if params[:code].nil?
+        halt 400, 'code param was missing'
+      end
+
       if compare_code_verifier(params[:code_verifier], challenge_store.get(params[:code]))
         exchange_code_for_access_token(params)
       else
-        halt 400, "Invalid code verifier"
+        halt 400, "code_verifier does not match code_challenge for this code"
       end
     end
 
