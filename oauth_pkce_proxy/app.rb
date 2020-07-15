@@ -2,6 +2,8 @@ require 'sinatra/reloader'
 require 'sinatra/json'
 require 'httparty'
 
+require_relative 'pkce'
+
 module OauthPkceProxy
   Provider = Struct.new(
     :client_secret,
@@ -11,11 +13,15 @@ module OauthPkceProxy
   )
 
   class App < Sinatra::Base
-    attr_reader :provider
+    include PKCE
 
-    def initialize(app = nil, provider: nil)
+    attr_reader :provider
+    attr_reader :challenge_store
+
+    def initialize(app = nil, provider: nil, challenge_store:)
       super app
       @provider = provider
+      @challenge_store = challenge_store
     end
 
     configure :development do
@@ -25,16 +31,32 @@ module OauthPkceProxy
     enable :sessions
 
     get '/oauth/authorize' do
-      session[:original_redirect_uri] = params['redirect_uri']
+      if params[:code_challenge].nil?
+        halt 400, 'code_challenge param was missing'
+      end
+
+      session[:original_redirect_uri] = params[:redirect_uri]
+      session[:code_challenge] = params[:code_challenge]
+
       redirect to("#{provider.authorize_url}?#{authorize_params(request, params)}")
     end
 
     get '/oauth/code' do
+      challenge_store.set(params[:code], session[:code_challenge])
+
       redirect to(session[:original_redirect_uri] + "?code=#{params[:code]}")
     end
 
     post '/oauth/access_token' do
-      exchange_code_for_access_token(params)
+      if params[:code_verifier].nil?
+        halt 400, 'code_verifier param was missing'
+      end
+
+      if compare_code_verifier(params[:code_verifier], challenge_store.get(params[:code]))
+        exchange_code_for_access_token(params)
+      else
+        halt 400, "Invalid code verifier"
+      end
     end
 
     get '/example_client_code_handler' do
